@@ -1,9 +1,9 @@
-const express = require('express');
-const cors = require('cors');
+const express = require("express");
+const cors = require("cors");
 const app = express();
 require("dotenv").config();
 const port = process.env.PORT || 3000;
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 app.use(cors());
 app.use(express.json());
@@ -14,35 +14,33 @@ const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
     strict: true,
-    deprecationErrors: true
-  }
+    deprecationErrors: true,
+  },
 });
 
 async function run() {
   try {
     await client.connect();
 
-    const db = client.db("TicketBari")
+    const db = client.db("TicketBari");
     const ticketCollection = db.collection("tickets");
 
     // All
     app.get("/tickets", async (req, res) => {
-       const query = {}
-            const {email} = req.query;
-            // /tickets?email=''&
-            if(email){
-                query.vendorEmail = email;
-            }
+      const query = {};
+      const { email } = req.query;
+      // /tickets?email=''&
+      if (email) {
+        query.vendorEmail = email;
+      }
 
-
-            const cursor = ticketCollection.find(query);
-            const result = await cursor.toArray();
-            res.send(result);
+      const cursor = ticketCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
     });
 
-
     // post
-    app.post("/tickets",   async (req, res) => {
+    app.post("/tickets", async (req, res) => {
       const data = req.body;
       const result = await ticketCollection.insertOne(data);
       res.send({
@@ -51,6 +49,13 @@ async function run() {
       });
     });
 
+    //delete
+    app.delete("/tickets/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await ticketCollection.deleteOne(query);
+      res.send(result);
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");
@@ -60,8 +65,8 @@ async function run() {
 }
 run();
 
-app.get('/', (req, res) => {
-  res.send('Ticket Bari Server Running...');
+app.get("/", (req, res) => {
+  res.send("Ticket Bari Server Running...");
 });
 
 app.listen(port, () => {

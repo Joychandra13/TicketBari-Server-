@@ -57,6 +57,17 @@ async function run() {
       res.send(result);
     });
 
+    //update
+    app.put("/tickets/:id", async (req, res) => {
+      const { id } = req.params;
+      const data = req.body;
+      const objectId = new ObjectId(id);
+      const filter = { _id: objectId };
+      const update = { $set: data };
+      const result = await ticketCollection.updateOne(filter, update);
+      res.send({ success: true, result });
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");
   } catch (error) {

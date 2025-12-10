@@ -27,8 +27,17 @@ async function run() {
 
     // All
     app.get("/tickets", async (req, res) => {
-        const result = await ticketCollection.find().toArray()
-      res.send(result);
+       const query = {}
+            const {email} = req.query;
+            // /tickets?email=''&
+            if(email){
+                query.vendorEmail = email;
+            }
+
+
+            const cursor = ticketCollection.find(query);
+            const result = await cursor.toArray();
+            res.send(result);
     });
 
 

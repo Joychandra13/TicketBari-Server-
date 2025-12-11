@@ -164,6 +164,7 @@ async function run() {
             ticketId: paymentInfo.ticketId,
             bookingId: paymentInfo.bookingId,
             ticketTitle: paymentInfo.ticketTitle,
+            quantity: paymentInfo.quantity
           },
           customer_email: paymentInfo.userEmail,
           success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
@@ -193,26 +194,39 @@ async function run() {
         }
 
         const bookingId = session.metadata.bookingId;
-        const ticketTitle = session.metadata.ticketTitle;
+        const ticketId = session.metadata.ticketId; // Get the ticket id
+        const ticketQuantityPurchased =
+          parseInt(session.metadata.quantity) || 1;
 
-        // Update booking status
+        // 1. Update booking status
         await bookingsCollection.updateOne(
           { _id: new ObjectId(bookingId) },
           { $set: { status: "paid", paidAt: new Date() } }
         );
 
-        // Check if payment already exists
+        // 2. Reduce ticket quantity
+        const ticket = await ticketCollection.findOne({
+          _id: new ObjectId(ticketId),
+        });
+        if (ticket) {
+          const newQuantity = ticket.quantity - ticketQuantityPurchased;
+          await ticketCollection.updateOne(
+            { _id: new ObjectId(ticketId) },
+            { $set: { quantity: newQuantity > 0 ? newQuantity : 0 } }
+          );
+        }
+
+        // 3. Record payment if not exists
         const existingPayment = await paymentsCollection.findOne({
           transactionId: session.payment_intent,
         });
         if (!existingPayment) {
-          // Record payment
           const payment = {
             amount: session.amount_total / 100,
             currency: session.currency,
             customerEmail: session.customer_email,
             bookingId,
-            ticketTitle,
+            ticketTitle: session.metadata.ticketTitle,
             transactionId: session.payment_intent,
             paymentStatus: session.payment_status,
             paidAt: new Date(),
@@ -220,7 +234,6 @@ async function run() {
           await paymentsCollection.insertOne(payment);
         }
 
-        // Return transaction ID
         res.send({ success: true, transactionId: session.payment_intent });
       } catch (err) {
         console.error(err);

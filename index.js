@@ -303,6 +303,14 @@ async function run() {
       res.send(result);
     });
 
+    // user-role
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      res.send({ role: user?.role || "user" });
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");
   } catch (error) {

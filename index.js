@@ -4,6 +4,7 @@ const app = express();
 require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
 app.use(cors());
 app.use(express.json());
@@ -25,6 +26,7 @@ async function run() {
     const db = client.db("TicketBari");
     const ticketCollection = db.collection("tickets");
     const bookingsCollection = db.collection("bookings");
+    const paymentsCollection = db.collection("payments");
 
     // All
     app.get("/tickets", async (req, res) => {
@@ -88,6 +90,13 @@ async function run() {
       }
     });
 
+    app.get("/bookings/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await bookingsCollection.findOne(query);
+      res.send(result);
+    });
+
     // Update booking status
     app.put("/bookings/:id", async (req, res) => {
       const { id } = req.params; // booking ID from URL
@@ -129,6 +138,110 @@ async function run() {
       }
     });
 
+    // payment checkout
+    app.post("/payment-checkout-session", async (req, res) => {
+      try {
+        const paymentInfo = req.body;
+        const amount = parseInt(paymentInfo.price) * paymentInfo.quantity * 100;
+
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          line_items: [
+            {
+              price_data: {
+                currency: "bdt",
+                unit_amount: amount,
+                product_data: {
+                  name: `Please pay for: ${paymentInfo.ticketTitle}`,
+                },
+              },
+              quantity: 1,
+            },
+          ],
+          mode: "payment",
+          metadata: {
+            ticketId: paymentInfo.ticketId,
+            bookingId: paymentInfo.bookingId,
+            ticketTitle: paymentInfo.ticketTitle,
+          },
+          customer_email: paymentInfo.userEmail,
+          success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+        });
+
+        res.send({ url: session.url });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ success: false, message: "Server error" });
+      }
+    });
+
+    // 2️⃣ Handle payment success (PATCH to match frontend)
+    app.patch("/payment-success", async (req, res) => {
+      try {
+        const sessionId = req.query.session_id;
+        if (!sessionId)
+          return res
+            .status(400)
+            .send({ success: false, message: "session_id required" });
+
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        if (session.payment_status !== "paid") {
+          return res.send({ success: false, message: "Payment not completed" });
+        }
+
+        const bookingId = session.metadata.bookingId;
+        const ticketTitle = session.metadata.ticketTitle;
+
+        // Update booking status
+        await bookingsCollection.updateOne(
+          { _id: new ObjectId(bookingId) },
+          { $set: { status: "paid", paidAt: new Date() } }
+        );
+
+        // Check if payment already exists
+        const existingPayment = await paymentsCollection.findOne({
+          transactionId: session.payment_intent,
+        });
+        if (!existingPayment) {
+          // Record payment
+          const payment = {
+            amount: session.amount_total / 100,
+            currency: session.currency,
+            customerEmail: session.customer_email,
+            bookingId,
+            ticketTitle,
+            transactionId: session.payment_intent,
+            paymentStatus: session.payment_status,
+            paidAt: new Date(),
+          };
+          await paymentsCollection.insertOne(payment);
+        }
+
+        // Return transaction ID
+        res.send({ success: true, transactionId: session.payment_intent });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ success: false, message: "Server error" });
+      }
+    });
+
+    // Get all payments for a user
+    app.get("/payments", async (req, res) => {
+      try {
+        const { email } = req.query;
+        if (!email) return res.status(400).send({ success: false, message: "Email required" });
+
+        const payments = await paymentsCollection.find({ customerEmail: email }).toArray();
+        res.send(payments);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ success: false, message: "Failed to fetch payments" });
+      }
+    });
+
+ 
 
 
     await client.db("admin").command({ ping: 1 });

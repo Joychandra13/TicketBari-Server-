@@ -269,7 +269,24 @@ async function run() {
       res.send({ success: true });
     });
 
+    // update fraud
+    app.patch("/users/mark-fraud/:email", async (req, res) => {
+      const { email } = req.params;
 
+      // 1. Mark user as fraud
+      await userCollection.updateOne(
+        { email },
+        { $set: { isFraud: true, role: "vendor" } }
+      );
+
+      // 2. Hide vendor tickets
+      await ticketCollection.updateMany(
+        { vendorEmail: email },
+        { $set: { status: "hidden" } }
+      );
+
+      res.send({ success: true });
+    });
 
     app.post("/users", async (req, res) => {
       const user = req.body;

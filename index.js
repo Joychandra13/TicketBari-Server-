@@ -25,6 +25,7 @@ async function run() {
 
     const db = client.db("TicketBari");
     const ticketCollection = db.collection("tickets");
+    const userCollection = db.collection("users");
     const bookingsCollection = db.collection("bookings");
     const paymentsCollection = db.collection("payments");
 
@@ -176,7 +177,7 @@ async function run() {
       }
     });
 
-    // 2️⃣ Handle payment success (PATCH to match frontend)
+    // Handle payment success (PATCH to match frontend)
     app.patch("/payment-success", async (req, res) => {
       try {
         const sessionId = req.query.session_id;
@@ -231,18 +232,43 @@ async function run() {
     app.get("/payments", async (req, res) => {
       try {
         const { email } = req.query;
-        if (!email) return res.status(400).send({ success: false, message: "Email required" });
+        if (!email)
+          return res
+            .status(400)
+            .send({ success: false, message: "Email required" });
 
-        const payments = await paymentsCollection.find({ customerEmail: email }).toArray();
+        const payments = await paymentsCollection
+          .find({ customerEmail: email })
+          .toArray();
         res.send(payments);
       } catch (err) {
         console.error(err);
-        res.status(500).send({ success: false, message: "Failed to fetch payments" });
+        res
+          .status(500)
+          .send({ success: false, message: "Failed to fetch payments" });
       }
     });
 
- 
+    // users related apis
+    app.post("/users", async (req, res) => {
+      const user = req.body;
+      user.role = "user";
+      user.createdAt = new Date();
+      const email = user.email;
+      const userExists = await userCollection.findOne({ email });
 
+      if (userExists) {
+        return res.send({ message: "user exists" });
+      }
+
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    });
+
+
+
+
+    
 
     await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");

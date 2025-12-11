@@ -250,6 +250,27 @@ async function run() {
     });
 
     // users related apis
+    app.get("/users", async (req, res) => {
+      const cursor = userCollection.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    // update-role
+    app.patch("/users/update-role/:email", async (req, res) => {
+      const { email } = req.params;
+      const { role } = req.body;
+
+      await userCollection.updateOne(
+        { email },
+        { $set: { role, isFraud: false } } // reset fraud status
+      );
+
+      res.send({ success: true });
+    });
+
+
+
     app.post("/users", async (req, res) => {
       const user = req.body;
       user.role = "user";
@@ -264,11 +285,6 @@ async function run() {
       const result = await userCollection.insertOne(user);
       res.send(result);
     });
-
-
-
-
-    
 
     await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");

@@ -81,11 +81,27 @@ async function run() {
         res.send(tickets);
       } catch (err) {
         console.error(err);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch approved tickets",
+        });
+      }
+    });
+
+    // GET /tickets/advertised
+    app.get("/tickets/advertised", async (req, res) => {
+      try {
+        const tickets = await ticketCollection
+          .find({ status: "approved", advertise: true })
+          .toArray();
+        res.send(tickets);
+      } catch (err) {
+        console.error(err);
         res
           .status(500)
           .send({
             success: false,
-            message: "Failed to fetch approved tickets",
+            message: "Failed to fetch advertised tickets",
           });
       }
     });
@@ -335,10 +351,6 @@ async function run() {
       const user = await userCollection.findOne(query);
       res.send({ role: user?.role || "user" });
     });
-
-
-
-    
 
     await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");

@@ -97,12 +97,10 @@ async function run() {
         res.send(tickets);
       } catch (err) {
         console.error(err);
-        res
-          .status(500)
-          .send({
-            success: false,
-            message: "Failed to fetch advertised tickets",
-          });
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch advertised tickets",
+        });
       }
     });
 
@@ -228,7 +226,7 @@ async function run() {
         }
 
         const bookingId = session.metadata.bookingId;
-        const ticketId = session.metadata.ticketId; // Get the ticket id
+        const ticketId = session.metadata.ticketId;
         const ticketQuantityPurchased =
           parseInt(session.metadata.quantity) || 1;
 
@@ -238,35 +236,31 @@ async function run() {
           { $set: { status: "paid", paidAt: new Date() } }
         );
 
-        // 2. Reduce ticket quantity
-        const ticket = await ticketCollection.findOne({
-          _id: new ObjectId(ticketId),
-        });
-        if (ticket) {
-          const newQuantity = ticket.quantity - ticketQuantityPurchased;
+        // 2. Reduce ticket quantity atomically
+        if (ticketId) {
           await ticketCollection.updateOne(
             { _id: new ObjectId(ticketId) },
-            { $set: { quantity: newQuantity > 0 ? newQuantity : 0 } }
+            { $inc: { quantity: -ticketQuantityPurchased } }
           );
         }
 
-        // 3. Record payment if not exists
-        const existingPayment = await paymentsCollection.findOne({
-          transactionId: session.payment_intent,
-        });
-        if (!existingPayment) {
-          const payment = {
-            amount: session.amount_total / 100,
-            currency: session.currency,
-            customerEmail: session.customer_email,
-            bookingId,
-            ticketTitle: session.metadata.ticketTitle,
-            transactionId: session.payment_intent,
-            paymentStatus: session.payment_status,
-            paidAt: new Date(),
-          };
-          await paymentsCollection.insertOne(payment);
-        }
+        // 3. Record payment using upsert to avoid duplicates
+        await paymentsCollection.updateOne(
+          { transactionId: session.payment_intent }, // check by transactionId
+          {
+            $setOnInsert: {
+              amount: session.amount_total / 100,
+              currency: session.currency,
+              customerEmail: session.customer_email,
+              bookingId,
+              ticketTitle: session.metadata.ticketTitle,
+              transactionId: session.payment_intent,
+              paymentStatus: session.payment_status,
+              paidAt: new Date(),
+            },
+          },
+          { upsert: true } // insert if not exists
+        );
 
         res.send({ success: true, transactionId: session.payment_intent });
       } catch (err) {

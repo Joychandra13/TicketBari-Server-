@@ -72,6 +72,24 @@ async function run() {
       res.send({ success: true, result });
     });
 
+    // GET only approved tickets
+    app.get("/tickets/approved", async (req, res) => {
+      try {
+        const tickets = await ticketCollection
+          .find({ status: "approved" })
+          .toArray();
+        res.send(tickets);
+      } catch (err) {
+        console.error(err);
+        res
+          .status(500)
+          .send({
+            success: false,
+            message: "Failed to fetch approved tickets",
+          });
+      }
+    });
+
     // booking
     app.get("/bookings", async (req, res) => {
       const query = {};
@@ -164,7 +182,7 @@ async function run() {
             ticketId: paymentInfo.ticketId,
             bookingId: paymentInfo.bookingId,
             ticketTitle: paymentInfo.ticketTitle,
-            quantity: paymentInfo.quantity
+            quantity: paymentInfo.quantity,
           },
           customer_email: paymentInfo.userEmail,
           success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
@@ -292,12 +310,6 @@ async function run() {
         { $set: { isFraud: true, role: "vendor" } }
       );
 
-      // 2. Hide vendor tickets
-      await ticketCollection.updateMany(
-        { vendorEmail: email },
-        { $set: { status: "hidden" } }
-      );
-
       res.send({ success: true });
     });
 
@@ -323,6 +335,10 @@ async function run() {
       const user = await userCollection.findOne(query);
       res.send({ role: user?.role || "user" });
     });
+
+
+
+    
 
     await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");

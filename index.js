@@ -58,6 +58,40 @@ async function run() {
     const bookingsCollection = db.collection("bookings");
     const paymentsCollection = db.collection("payments");
 
+
+
+    // GET only approved tickets
+    app.get("/tickets/approved", async (req, res) => {
+      try {
+        const tickets = await ticketCollection
+          .find({ status: "approved" })
+          .toArray();
+        res.send(tickets);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch approved tickets",
+        });
+      }
+    });
+
+    // GET /tickets/advertised
+    app.get("/tickets/advertised", async (req, res) => {
+      try {
+        const tickets = await ticketCollection
+          .find({ status: "approved", advertise: true })
+          .toArray();
+        res.send(tickets);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch advertised tickets",
+        });
+      }
+    });
+
     // All
     app.get("/tickets", async (req, res) => {
       const query = {};
@@ -101,37 +135,7 @@ async function run() {
       res.send({ success: true, result });
     });
 
-    // GET only approved tickets
-    app.get("/tickets/approved", async (req, res) => {
-      try {
-        const tickets = await ticketCollection
-          .find({ status: "approved" })
-          .toArray();
-        res.send(tickets);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({
-          success: false,
-          message: "Failed to fetch approved tickets",
-        });
-      }
-    });
 
-    // GET /tickets/advertised
-    app.get("/tickets/advertised", async (req, res) => {
-      try {
-        const tickets = await ticketCollection
-          .find({ status: "approved", advertise: true })
-          .toArray();
-        res.send(tickets);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({
-          success: false,
-          message: "Failed to fetch advertised tickets",
-        });
-      }
-    });
 
     // booking
     app.get("/bookings",verifyFBToken, async (req, res) => {
@@ -419,6 +423,8 @@ app.get("/", (req, res) => {
   res.send("Ticket Bari Server Running...");
 });
 
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
+// app.listen(port, () => {
+//   console.log(`Server is running on port ${port}`);
+// });
+
+module.exports = app;

@@ -10,7 +10,9 @@ const admin = require("firebase-admin");
 
 // const serviceAccount = require("./firebase-admin-key.json");
 
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
 const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
@@ -58,7 +60,21 @@ async function run() {
     const bookingsCollection = db.collection("bookings");
     const paymentsCollection = db.collection("payments");
 
-
+    // GET /tickets/advertised
+    app.get("/tickets/advertised", async (req, res) => {
+      try {
+        const tickets = await ticketCollection
+          .find({ status: "approved", advertise: true })
+          .toArray();
+        res.send(tickets);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch advertised tickets",
+        });
+      }
+    });
 
     // GET only approved tickets
     app.get("/tickets/approved", async (req, res) => {
@@ -72,22 +88,6 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to fetch approved tickets",
-        });
-      }
-    });
-
-    // GET /tickets/advertised
-    app.get("/tickets/advertised", async (req, res) => {
-      try {
-        const tickets = await ticketCollection
-          .find({ status: "approved", advertise: true })
-          .toArray();
-        res.send(tickets);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({
-          success: false,
-          message: "Failed to fetch advertised tickets",
         });
       }
     });
@@ -107,7 +107,7 @@ async function run() {
     });
 
     // post
-    app.post("/tickets",verifyFBToken, async (req, res) => {
+    app.post("/tickets", verifyFBToken, async (req, res) => {
       const data = req.body;
       const result = await ticketCollection.insertOne(data);
       res.send({
@@ -117,7 +117,7 @@ async function run() {
     });
 
     //delete
-    app.delete("/tickets/:id",verifyFBToken, async (req, res) => {
+    app.delete("/tickets/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await ticketCollection.deleteOne(query);
@@ -125,7 +125,7 @@ async function run() {
     });
 
     //update
-    app.put("/tickets/:id",verifyFBToken, async (req, res) => {
+    app.put("/tickets/:id", verifyFBToken, async (req, res) => {
       const { id } = req.params;
       const data = req.body;
       const objectId = new ObjectId(id);
@@ -135,10 +135,8 @@ async function run() {
       res.send({ success: true, result });
     });
 
-
-
     // booking
-    app.get("/bookings",verifyFBToken, async (req, res) => {
+    app.get("/bookings", verifyFBToken, async (req, res) => {
       const query = {};
       const { email, status } = req.query;
 
@@ -156,7 +154,7 @@ async function run() {
       }
     });
 
-    app.get("/bookings/:id",verifyFBToken, async (req, res) => {
+    app.get("/bookings/:id", verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await bookingsCollection.findOne(query);
@@ -164,7 +162,7 @@ async function run() {
     });
 
     // Update booking status
-    app.put("/bookings/:id",verifyFBToken, async (req, res) => {
+    app.put("/bookings/:id", verifyFBToken, async (req, res) => {
       const { id } = req.params; // booking ID from URL
       const data = req.body; // expected: { status: "Accepted" } or { status: "Rejected" }
 
@@ -190,7 +188,7 @@ async function run() {
     });
 
     // Add a new booking
-    app.post("/bookings",verifyFBToken, async (req, res) => {
+    app.post("/bookings", verifyFBToken, async (req, res) => {
       const booking = req.body;
       booking.createdAt = new Date();
       booking.status = "Pending";
@@ -205,7 +203,7 @@ async function run() {
     });
 
     //payment-checkout-session
-    app.post("/payment-checkout-session",verifyFBToken, async (req, res) => {
+    app.post("/payment-checkout-session", verifyFBToken, async (req, res) => {
       try {
         const paymentInfo = req.body;
         const amountPerTicket = parseInt(paymentInfo.price) * 100; // per ticket in cents
@@ -356,14 +354,14 @@ async function run() {
     });
 
     // users related apis
-    app.get("/users",verifyFBToken, async (req, res) => {
+    app.get("/users", verifyFBToken, async (req, res) => {
       const cursor = userCollection.find();
       const result = await cursor.toArray();
       res.send(result);
     });
 
     // update-role
-    app.patch("/users/update-role/:email",verifyFBToken, async (req, res) => {
+    app.patch("/users/update-role/:email", verifyFBToken, async (req, res) => {
       const { email } = req.params;
       const { role } = req.body;
 
@@ -376,7 +374,7 @@ async function run() {
     });
 
     // update fraud
-    app.patch("/users/mark-fraud/:email",verifyFBToken, async (req, res) => {
+    app.patch("/users/mark-fraud/:email", verifyFBToken, async (req, res) => {
       const { email } = req.params;
 
       // 1. Mark user as fraud
@@ -404,7 +402,7 @@ async function run() {
     });
 
     // user-role
-    app.get("/users/:email/role",verifyFBToken, async (req, res) => {
+    app.get("/users/:email/role", verifyFBToken, async (req, res) => {
       const email = req.params.email;
       const query = { email };
       const user = await userCollection.findOne(query);
@@ -423,8 +421,8 @@ app.get("/", (req, res) => {
   res.send("Ticket Bari Server Running...");
 });
 
-// app.listen(port, () => {
-//   console.log(`Server is running on port ${port}`);
-// });
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
 
 module.exports = app;

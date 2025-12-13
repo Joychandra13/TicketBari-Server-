@@ -6,8 +6,37 @@ const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
+const admin = require("firebase-admin");
+
+// const serviceAccount = require("./firebase-admin-key.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
 app.use(cors());
 app.use(express.json());
+
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers.authorization;
+
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  try {
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log("decoded in the token", decoded);
+    req.decoded_email = decoded.email;
+
+    next();
+  } catch (err) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.3v9uvsg.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -44,7 +73,7 @@ async function run() {
     });
 
     // post
-    app.post("/tickets", async (req, res) => {
+    app.post("/tickets",verifyFBToken, async (req, res) => {
       const data = req.body;
       const result = await ticketCollection.insertOne(data);
       res.send({
@@ -54,7 +83,7 @@ async function run() {
     });
 
     //delete
-    app.delete("/tickets/:id", async (req, res) => {
+    app.delete("/tickets/:id",verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await ticketCollection.deleteOne(query);
@@ -62,7 +91,7 @@ async function run() {
     });
 
     //update
-    app.put("/tickets/:id", async (req, res) => {
+    app.put("/tickets/:id",verifyFBToken, async (req, res) => {
       const { id } = req.params;
       const data = req.body;
       const objectId = new ObjectId(id);
@@ -105,7 +134,7 @@ async function run() {
     });
 
     // booking
-    app.get("/bookings", async (req, res) => {
+    app.get("/bookings",verifyFBToken, async (req, res) => {
       const query = {};
       const { email, status } = req.query;
 
@@ -123,7 +152,7 @@ async function run() {
       }
     });
 
-    app.get("/bookings/:id", async (req, res) => {
+    app.get("/bookings/:id",verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await bookingsCollection.findOne(query);
@@ -131,7 +160,7 @@ async function run() {
     });
 
     // Update booking status
-    app.put("/bookings/:id", async (req, res) => {
+    app.put("/bookings/:id",verifyFBToken, async (req, res) => {
       const { id } = req.params; // booking ID from URL
       const data = req.body; // expected: { status: "Accepted" } or { status: "Rejected" }
 
@@ -157,7 +186,7 @@ async function run() {
     });
 
     // Add a new booking
-    app.post("/bookings", async (req, res) => {
+    app.post("/bookings",verifyFBToken, async (req, res) => {
       const booking = req.body;
       booking.createdAt = new Date();
       booking.status = "Pending";
@@ -171,11 +200,12 @@ async function run() {
       }
     });
 
-    // payment checkout
-    app.post("/payment-checkout-session", async (req, res) => {
+    //payment-checkout-session
+    app.post("/payment-checkout-session",verifyFBToken, async (req, res) => {
       try {
         const paymentInfo = req.body;
-        const amount = parseInt(paymentInfo.price) * paymentInfo.quantity * 100;
+        const amountPerTicket = parseInt(paymentInfo.price) * 100; // per ticket in cents
+        const quantity = parseInt(paymentInfo.quantity) || 1;
 
         const session = await stripe.checkout.sessions.create({
           payment_method_types: ["card"],
@@ -183,12 +213,12 @@ async function run() {
             {
               price_data: {
                 currency: "bdt",
-                unit_amount: amount,
+                unit_amount: amountPerTicket,
                 product_data: {
                   name: `Please pay for: ${paymentInfo.ticketTitle}`,
                 },
               },
-              quantity: 1,
+              quantity: quantity,
             },
           ],
           mode: "payment",
@@ -196,7 +226,7 @@ async function run() {
             ticketId: paymentInfo.ticketId,
             bookingId: paymentInfo.bookingId,
             ticketTitle: paymentInfo.ticketTitle,
-            quantity: paymentInfo.quantity,
+            quantity: quantity,
           },
           customer_email: paymentInfo.userEmail,
           success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
@@ -210,7 +240,7 @@ async function run() {
       }
     });
 
-    // Handle payment success (PATCH to match frontend)
+    // payment-success
     app.patch("/payment-success", async (req, res) => {
       try {
         const sessionId = req.query.session_id;
@@ -230,23 +260,44 @@ async function run() {
         const ticketQuantityPurchased =
           parseInt(session.metadata.quantity) || 1;
 
-        // 1. Update booking status
+        // Prevent duplicate payment processing
+        const existingPayment = await paymentsCollection.findOne({
+          transactionId: session.payment_intent,
+        });
+        if (existingPayment) {
+          return res.send({
+            success: true,
+            message: "Payment already processed",
+          });
+        }
+
+        // Update booking status
         await bookingsCollection.updateOne(
           { _id: new ObjectId(bookingId) },
           { $set: { status: "paid", paidAt: new Date() } }
         );
 
-        // 2. Reduce ticket quantity atomically
+        // Reduce ticket quantity safely
         if (ticketId) {
-          await ticketCollection.updateOne(
-            { _id: new ObjectId(ticketId) },
-            { $inc: { quantity: -ticketQuantityPurchased } }
-          );
+          // Only reduce if payment has not been processed yet
+          const existingPayment = await paymentsCollection.findOne({
+            transactionId: session.payment_intent,
+          });
+
+          if (!existingPayment) {
+            await ticketCollection.updateOne(
+              {
+                _id: new ObjectId(ticketId),
+                quantity: { $gte: ticketQuantityPurchased },
+              },
+              { $inc: { quantity: -ticketQuantityPurchased } }
+            );
+          }
         }
 
-        // 3. Record payment using upsert to avoid duplicates
+        // Record payment
         await paymentsCollection.updateOne(
-          { transactionId: session.payment_intent }, // check by transactionId
+          { transactionId: session.payment_intent },
           {
             $setOnInsert: {
               amount: session.amount_total / 100,
@@ -256,10 +307,11 @@ async function run() {
               ticketTitle: session.metadata.ticketTitle,
               transactionId: session.payment_intent,
               paymentStatus: session.payment_status,
+              quantity: ticketQuantityPurchased,
               paidAt: new Date(),
             },
           },
-          { upsert: true } // insert if not exists
+          { upsert: true }
         );
 
         res.send({ success: true, transactionId: session.payment_intent });
@@ -270,17 +322,26 @@ async function run() {
     });
 
     // Get all payments for a user
-    app.get("/payments", async (req, res) => {
+    app.get("/payments", verifyFBToken, async (req, res) => {
       try {
         const { email } = req.query;
-        if (!email)
+
+        // 1. Email required
+        if (!email) {
           return res
             .status(400)
             .send({ success: false, message: "Email required" });
+        }
+
+        // 2. Email must match token email
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
 
         const payments = await paymentsCollection
           .find({ customerEmail: email })
           .toArray();
+
         res.send(payments);
       } catch (err) {
         console.error(err);
@@ -291,14 +352,14 @@ async function run() {
     });
 
     // users related apis
-    app.get("/users", async (req, res) => {
+    app.get("/users",verifyFBToken, async (req, res) => {
       const cursor = userCollection.find();
       const result = await cursor.toArray();
       res.send(result);
     });
 
     // update-role
-    app.patch("/users/update-role/:email", async (req, res) => {
+    app.patch("/users/update-role/:email",verifyFBToken, async (req, res) => {
       const { email } = req.params;
       const { role } = req.body;
 
@@ -311,7 +372,7 @@ async function run() {
     });
 
     // update fraud
-    app.patch("/users/mark-fraud/:email", async (req, res) => {
+    app.patch("/users/mark-fraud/:email",verifyFBToken, async (req, res) => {
       const { email } = req.params;
 
       // 1. Mark user as fraud
@@ -339,14 +400,14 @@ async function run() {
     });
 
     // user-role
-    app.get("/users/:email/role", async (req, res) => {
+    app.get("/users/:email/role",verifyFBToken, async (req, res) => {
       const email = req.params.email;
       const query = { email };
       const user = await userCollection.findOne(query);
       res.send({ role: user?.role || "user" });
     });
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");
   } catch (error) {
     console.log("MongoDB Connection Failed!", error.message);

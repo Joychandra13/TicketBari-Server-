@@ -109,6 +109,11 @@ async function run() {
     // post
     app.post("/tickets", verifyFBToken, async (req, res) => {
       const data = req.body;
+      
+      // FIX: Ensure quantity and price are stored as numbers
+      if (data.quantity) data.quantity = parseInt(data.quantity);
+      if (data.price) data.price = parseFloat(data.price);
+
       const result = await ticketCollection.insertOne(data);
       res.send({
         success: true,
@@ -128,6 +133,11 @@ async function run() {
     app.put("/tickets/:id", verifyFBToken, async (req, res) => {
       const { id } = req.params;
       const data = req.body;
+
+      // FIX: Ensure quantity and price are numbers when updating
+      if (data.quantity) data.quantity = parseInt(data.quantity);
+      if (data.price) data.price = parseFloat(data.price);
+
       const objectId = new ObjectId(id);
       const filter = { _id: objectId };
       const update = { $set: data };
@@ -206,7 +216,7 @@ async function run() {
     app.post("/payment-checkout-session", verifyFBToken, async (req, res) => {
       try {
         const paymentInfo = req.body;
-        const amountPerTicket = parseInt(paymentInfo.price) * 100; // per ticket in cents
+        const amountPerTicket = Math.round(parseFloat(paymentInfo.price) * 100); 
         const quantity = parseInt(paymentInfo.quantity) || 1;
 
         const session = await stripe.checkout.sessions.create({
@@ -227,7 +237,7 @@ async function run() {
           metadata: {
             ticketId: paymentInfo.ticketId,
             bookingId: paymentInfo.bookingId,
-            ticketTitle: paymentInfo.ticketTitle,
+            ticketTitle: paymentInfo.ticketTitle, // Ensure this key matches metadata exactly
             quantity: quantity,
           },
           customer_email: paymentInfo.userEmail,
@@ -246,58 +256,43 @@ async function run() {
     app.patch("/payment-success", async (req, res) => {
       try {
         const sessionId = req.query.session_id;
-        if (!sessionId)
-          return res
-            .status(400)
-            .send({ success: false, message: "session_id required" });
+        if (!sessionId) return res.status(400).send({ success: false, message: "session_id required" });
 
         const session = await stripe.checkout.sessions.retrieve(sessionId);
-
         if (session.payment_status !== "paid") {
           return res.send({ success: false, message: "Payment not completed" });
         }
 
         const bookingId = session.metadata.bookingId;
         const ticketId = session.metadata.ticketId;
-        const ticketQuantityPurchased =
-          parseInt(session.metadata.quantity) || 1;
+        const ticketTitle = session.metadata.ticketTitle; // Metadata capture
+        const qtyPurchased = parseInt(session.metadata.quantity) || 1;
 
-        // Prevent duplicate payment processing
-        const existingPayment = await paymentsCollection.findOne({
-          transactionId: session.payment_intent,
-        });
-        if (existingPayment) {
-          return res.send({
-            success: true,
-            message: "Payment already processed",
-          });
-        }
-
-        // Update booking status
-        await bookingsCollection.updateOne(
-          { _id: new ObjectId(bookingId) },
-          { $set: { status: "paid", paidAt: new Date() } }
+        // --- STEP 1: THE ATOMIC LOCK (Prevents Double Decrease) ---
+        const bookingUpdate = await bookingsCollection.updateOne(
+          { _id: new ObjectId(bookingId), status: { $ne: "paid" } },
+          { $set: { status: "paid", paidAt: new Date(), transactionId: session.payment_intent } }
         );
 
-        // Reduce ticket quantity safely
-        if (ticketId) {
-          // Only reduce if payment has not been processed yet
-          const existingPayment = await paymentsCollection.findOne({
-            transactionId: session.payment_intent,
-          });
+        if (bookingUpdate.modifiedCount === 0) {
+          return res.send({ success: true, message: "Already processed" });
+        }
 
-          if (!existingPayment) {
+        // --- STEP 2: THE MATH ---
+        if (ticketId) {
+          const ticket = await ticketCollection.findOne({ _id: new ObjectId(ticketId) });
+          if (ticket) {
+            const currentQty = Number(ticket.quantity) || 0;
+            const finalQuantity = currentQty - qtyPurchased;
+
             await ticketCollection.updateOne(
-              {
-                _id: new ObjectId(ticketId),
-                quantity: { $gte: ticketQuantityPurchased },
-              },
-              { $inc: { quantity: -ticketQuantityPurchased } }
+              { _id: new ObjectId(ticketId) },
+              { $set: { quantity: finalQuantity >= 0 ? finalQuantity : 0 } }
             );
           }
         }
 
-        // Record payment
+        // --- STEP 3: RECORD PAYMENT ---
         await paymentsCollection.updateOne(
           { transactionId: session.payment_intent },
           {
@@ -306,10 +301,11 @@ async function run() {
               currency: session.currency,
               customerEmail: session.customer_email,
               bookingId,
-              ticketTitle: session.metadata.ticketTitle,
+              ticketId,
+              ticketTitle: ticketTitle, // Saved to DB here
               transactionId: session.payment_intent,
               paymentStatus: session.payment_status,
-              quantity: ticketQuantityPurchased,
+              quantity: qtyPurchased,
               paidAt: new Date(),
             },
           },
@@ -318,7 +314,7 @@ async function run() {
 
         res.send({ success: true, transactionId: session.payment_intent });
       } catch (err) {
-        console.error(err);
+        console.error("Payment Success Error:", err);
         res.status(500).send({ success: false, message: "Server error" });
       }
     });
@@ -409,7 +405,6 @@ async function run() {
       res.send({ role: user?.role || "user" });
     });
 
-    // await client.db("admin").command({ ping: 1 });
     console.log("MongoDB Connected Successfully!");
   } catch (error) {
     console.log("MongoDB Connection Failed!", error.message);
@@ -424,4 +419,3 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
-
